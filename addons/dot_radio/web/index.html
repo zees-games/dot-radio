@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio</title>
+<style>
+:root { color-scheme: light dark; --bg:#f6f7f9; --panel:#fff; --text:#1b1f24; --muted:#667085; --line:#e2e5ea; --accent:#2563eb; --accent-text:#fff; --bad:#b42318; --ok:#067647; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --panel:#171b21; --text:#e6e9ee; --muted:#98a2b3; --line:#2a313a; --accent:#6b9bff; --accent-text:#0b1020; --bad:#f97066; --ok:#47cd89; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+header { display:flex; align-items:center; gap:12px; padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+header h1 { font-size:17px; margin:0 auto 0 0; font-weight:650; }
+main { max-width:960px; margin:20px auto; padding:0 16px; display:grid; gap:16px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+.card h2 { font-size:14px; margin:0 0 10px; color:var(--muted); font-weight:650; text-transform:uppercase; letter-spacing:.04em; }
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+input, button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:6px 10px; }
+input:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+button { cursor:pointer; }
+button.primary { background:var(--accent); color:var(--accent-text); border-color:var(--accent); font-weight:600; }
+button:disabled { opacity:.5; cursor:default; }
+button.on { border-color:var(--accent); color:var(--accent); }
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; color:var(--muted); font-weight:600; font-size:13px; }
+th, td { padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+td.act { white-space:nowrap; width:1%; }
+td.act button { padding:3px 8px; font-size:13px; }
+td.act button + button { margin-left:4px; }
+.num { text-align:right; font-variant-numeric:tabular-nums; }
+.bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:8px; }
+.bar > div { height:100%; background:var(--accent); width:0; }
+#drop { border:2px dashed var(--line); border-radius:10px; padding:22px; text-align:center; color:var(--muted); }
+#drop.over { border-color:var(--accent); color:var(--accent); }
+.err { color:var(--bad); font-size:13px; }
+.ok { color:var(--ok); font-size:13px; }
+.muted { color:var(--muted); font-size:13px; }
+.big { font-size:20px; font-weight:650; }
+.hidden { display:none; }
+@media (max-width:560px) { header { padding:10px 14px; } th, td { padding:7px 4px; } .hide-s { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Radio</h1>
+  <label class="muted" for="token">Admin token</label>
+  <input id="token" type="password" autocomplete="off" placeholder="paste token" size="22">
+  <button id="connect" class="primary">Connect</button>
+</header>
+<main>
+  <div id="status" class="muted">Enter the admin token to manage the station.</div>
+
+  <section class="card">
+    <h2>Now playing</h2>
+    <div id="np" class="big">Quiet</div>
+    <div id="npsub" class="muted"></div>
+    <div class="bar"><div id="prog"></div></div>
+    <div class="row" style="margin-top:12px">
+      <button id="start">Start</button>
+      <button id="stop">Stop</button>
+      <button id="skip" class="primary">Skip</button>
+      <button id="shuffle">Shuffle</button>
+      <button id="loop">Loop</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Upload</h2>
+    <div id="drop">Drop MP3 or OGG files here, or <button id="pick">choose files</button><input id="files" type="file" accept=".mp3,.ogg,audio/mpeg,audio/ogg" multiple class="hidden"></div>
+    <p class="muted">You are responsible for having the right to broadcast what you upload. The server only stores and plays it.</p>
+    <div id="uploads"></div>
+  </section>
+
+  <section class="card">
+    <h2>Library</h2>
+    <table>
+      <thead><tr><th>Title</th><th class="hide-s">Artist</th><th class="num">Length</th><th class="num hide-s">Rating</th><th></th></tr></thead>
+      <tbody id="lib"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Queue</h2>
+    <table><tbody id="queue"></tbody></table>
+    <div id="queue-empty" class="muted">Nothing requested.</div>
+  </section>
+
+  <section class="card">
+    <h2>Playlist</h2>
+    <table><tbody id="plist"></tbody></table>
+    <div id="plist-empty" class="muted">The playlist is empty.</div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let token = sessionStorage.getItem("radio-token") || "";
+let tracks = [], view = {playlist: [], queue: []}, now = {}, skew = 0;
+const api = (path, opt = {}) => fetch(new URL(path, location.href), {...opt, headers: {Authorization: "Bearer " + token, ...(opt.headers || {})}})
+  .then(async r => { const j = await r.json().catch(() => ({})); if (!j.ok) throw new Error(j.error ? j.error.message : r.status + " " + r.statusText); return j.value; });
+const op = (o, extra = {}) => api("api", {method: "POST", body: JSON.stringify({op: o, ...extra})});
+const say = (msg, bad) => { const s = $("status"); s.textContent = msg; s.className = bad ? "err" : "ok"; };
+const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const title = id => (tracks.find(t => t.id === id) || {title: id}).title;
+const cell = (tr, text, cls) => { const td = tr.insertCell(); td.textContent = text; if (cls) td.className = cls; return td; };
+function actions(tr, list) {
+  const td = tr.insertCell(); td.className = "act";
+  for (const [label, fn] of list) { const b = document.createElement("button"); b.textContent = label; b.onclick = () => run(fn); td.append(b); }
+}
+async function run(fn) { try { await fn(); await refresh(); } catch (e) { say(e.message, true); } }
+
+async function refresh() {
+  const [t, v, n] = await Promise.all([op("tracks"), op("playlist"), op("now")]);
+  tracks = t.tracks; view = v; now = n; skew = n.server_time ? Date.now() / 1000 - n.server_time : 0;
+  render();
+}
+function render() {
+  const lib = $("lib"); lib.replaceChildren();
+  for (const t of tracks) {
+    const tr = lib.insertRow(); cell(tr, t.title); cell(tr, t.artist, "hide-s"); cell(tr, fmt(t.duration), "num");
+    cell(tr, "+" + t.rating.up + " / -" + t.rating.down, "num hide-s");
+    actions(tr, [["Queue", () => op("queue", {id: t.id})],
+      t.in_playlist ? ["Unlist", () => op("playlist_remove", {id: t.id})] : ["List", () => op("playlist_add", {id: t.id})],
+      ["Delete", async () => { if (confirm("Delete " + t.title + "?")) await op("delete", {id: t.id}); }]]);
+  }
+  const q = $("queue"); q.replaceChildren(); $("queue-empty").classList.toggle("hidden", view.queue.length > 0);
+  view.queue.forEach((e, i) => { const tr = q.insertRow(); cell(tr, title(e.id)); cell(tr, e.by, "muted"); actions(tr, [["Remove", () => op("dequeue", {index: i})]]); });
+  const p = $("plist"); p.replaceChildren(); $("plist-empty").classList.toggle("hidden", view.playlist.length > 0);
+  view.playlist.forEach((id, i) => {
+    const tr = p.insertRow(); cell(tr, i + 1, "muted"); cell(tr, title(id));
+    const move = d => () => { const ids = [...view.playlist]; [ids[i], ids[i + d]] = [ids[i + d], ids[i]]; return op("reorder", {ids}); };
+    actions(tr, [["Up", i > 0 ? move(-1) : () => 0], ["Down", i < view.playlist.length - 1 ? move(1) : () => 0], ["Remove", () => op("playlist_remove", {id})]]);
+  });
+  $("shuffle").classList.toggle("on", !!view.shuffle); $("loop").classList.toggle("on", !!view.loop);
+  tick();
+}
+function tick() {
+  const el = $("np");
+  if (!now.id) { el.textContent = view.running ? "Starting" : "Quiet"; $("npsub").textContent = ""; $("prog").style.width = "0"; return; }
+  const pos = Date.now() / 1000 - skew - now.server_time + now.position;
+  el.textContent = now.title; $("npsub").textContent = (now.artist ? now.artist + " - " : "") + (pos < 0 ? "starts in " + fmt(-pos) : fmt(pos) + " / " + fmt(now.duration));
+  $("prog").style.width = Math.min(100, Math.max(0, pos / now.duration * 100)) + "%";
+}
+setInterval(() => { if (token) { tick(); if (now.id && Date.now() / 1000 - skew - now.server_time + now.position > now.duration) refresh().catch(() => {}); } }, 500);
+setInterval(() => { if (token) refresh().catch(() => {}); }, 10000);
+
+function upload(file) {
+  const row = document.createElement("div"); row.className = "muted"; row.textContent = file.name + " ..."; $("uploads").prepend(row);
+  const x = new XMLHttpRequest();
+  x.open("PUT", new URL("api/tracks/" + encodeURIComponent(file.name), location.href) + "?title=" + encodeURIComponent(file.name.replace(/\.[^.]+$/, "")));
+  x.setRequestHeader("Authorization", "Bearer " + token);
+  x.upload.onprogress = e => { row.textContent = file.name + " " + Math.round(e.loaded / e.total * 100) + "%"; };
+  x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (_) {} row.className = j.ok ? "ok" : "err"; row.textContent = file.name + (j.ok ? " added" : ": " + (j.error ? j.error.message : x.status)); refresh().catch(() => {}); };
+  x.onerror = () => { row.className = "err"; row.textContent = file.name + ": the upload failed"; };
+  x.send(file);
+}
+const take = list => [...list].forEach(upload);
+const drop = $("drop");
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); take(e.dataTransfer.files); };
+$("pick").onclick = () => $("files").click();
+$("files").onchange = e => { take(e.target.files); e.target.value = ""; };
+$("skip").onclick = () => run(() => op("skip"));
+$("start").onclick = () => run(() => op("start"));
+$("stop").onclick = () => run(() => op("stop"));
+$("shuffle").onclick = () => run(() => op("mode", {shuffle: !view.shuffle, loop: view.loop}));
+$("loop").onclick = () => run(() => op("mode", {shuffle: view.shuffle, loop: !view.loop}));
+$("connect").onclick = async () => {
+  token = $("token").value.trim() || token; sessionStorage.setItem("radio-token", token); $("token").value = "";
+  try { await refresh(); say("Connected."); } catch (e) { say(e.message, true); }
+};
+if (token) refresh().then(() => say("Connected.")).catch(e => say(e.message, true));
+</script>
+</body>
+</html>
