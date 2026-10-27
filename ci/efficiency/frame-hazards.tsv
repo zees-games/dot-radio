@@ -1,0 +1,12 @@
+# frame-hazards
+# Baselines only shrink: scripts/<gate> --update lowers or drops entries and refuses to add.
+addons/dot_radio/dot_radio_client.gd::_evict::alloc_array	1
+addons/dot_radio/dot_radio_client.gd::_load_current::duplicate	1
+addons/dot_radio/dot_radio_client.gd::_load_current::string_build	2
+addons/dot_radio/dot_radio_client.gd::_poll::string_build	2
+addons/dot_radio/dot_radio_client.gd::_prefetch_next::string_build	1
+addons/dot_radio/dot_radio_client.gd::_stream_for::string_build	5
+addons/dot_radio/dot_radio_client.gd::_trim_streams::alloc_array	1
+addons/dot_radio/dot_radio_client.gd::_trim_streams::string_build	1
+addons/dot_radio/dot_radio_client.gd::apply_now::string_build	4
+addons/dot_radio/dot_radio_client.gd::tick::string_build	1

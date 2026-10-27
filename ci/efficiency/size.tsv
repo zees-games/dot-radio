@@ -1,0 +1,4 @@
+# size
+# Baselines only shrink: scripts/<gate> --update lowers or drops entries and refuses to add.
+examples/radio_selftest.gd::_test_client	124
+examples/radio_selftest.gd::_test_station	94
