@@ -1,11 +1,7 @@
 extends Node
 
-## Exercises the radio headless: library validation, station scheduling and seek math, API permissions, an HTTP upload and fetch
-## round trip on loopback, the client against a null sink, and chat commands.
-##
-## [codeblock]
-## godot --headless --path . res://examples/radio_selftest.tscn
-## [/codeblock]
+## Headless radio check: library, schedule and seek math, API permissions, HTTP round trip, client on a null sink, chat commands.
+## Run: godot --headless --path . res://examples/radio_selftest.tscn
 
 const SECTIONS := 8
 const CHECKS := 143
@@ -43,7 +39,7 @@ func _ready() -> void:
 	get_tree().quit(1 if _failed > 0 else 0)
 
 
-# --- helpers ---------------------------------------------------------------
+# helpers
 
 # Bytes that pass the magic check; the fake probe reads the length from the size (10 bytes per second).
 func _fake(seconds: int, kind: String = "mp3") -> PackedByteArray:
@@ -90,7 +86,7 @@ func _play_order(st: DotRadioStation, t: Array, n: int) -> Array:
 	return order
 
 
-# --- sections --------------------------------------------------------------
+# sections
 
 func _test_library() -> void:
 	_section("library")
@@ -644,7 +640,7 @@ class FakeRegistrar extends RefCounted:
 		seen[str(name)] = fn
 
 
-# --- harness ---------------------------------------------------------------
+# harness
 
 func _clean() -> void:
 	DotPaths.remove_tree(BASE)

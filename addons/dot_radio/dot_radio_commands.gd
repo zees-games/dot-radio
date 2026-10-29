@@ -2,9 +2,8 @@ class_name DotRadioCommands
 extends RefCounted
 
 ## Chat-style commands (!radio, !song, !request, !rate) over a client and a server call, with no dependency on dot-console or dot-chat.
-##
-## [method execute] takes one line and returns the reply text. [method register] hands the commands to anything that looks like
-## a registry: `add_command(name, help, fn)` (dot-console's local console) or `register_command(name, fn)`.
+## [method execute] takes one line and returns the reply. [method register] fits any registry with
+## `add_command(name, help, fn)` or `register_command(name, fn)`.
 
 const CHANNEL := "radio"
 const COMMANDS := {

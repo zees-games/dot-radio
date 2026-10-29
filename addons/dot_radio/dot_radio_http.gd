@@ -2,10 +2,8 @@ class_name DotRadioHttp
 extends RefCounted
 
 ## Mounts a DotRadioApi on a DotHttpServer: the admin page, bearer-token routes, and the public now-playing and track-file routes clients use. Off by default.
-##
-## Public (no token, CORS open): GET /now, /tracks, /track/<id>. Admin (Bearer token): POST /api (JSON envelope),
-## GET /api/<op>, POST /api/<op>, PUT /api/tracks/<name> (raw body, ?title=&artist=), DELETE /api/tracks/<id>.
-## [member base] puts every route under a prefix, so the radio can share a server (the workbench's) with other pages.
+## Public (no token, CORS open): GET /now, /tracks, /track/<id>. Admin (Bearer): /api, /api/<op>, PUT /api/tracks/<name>, DELETE /api/tracks/<id>.
+## [member base] prefixes every route so the radio can share a server with other pages.
 
 const CHANNEL := "radio"
 const PAGE := "res://addons/dot_radio/web/index.html"

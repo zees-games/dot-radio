@@ -2,10 +2,8 @@ class_name DotRadioClient
 extends Node
 
 ## The listener: follows the station's schedule, downloads each track once, and plays it seeked to where the station is.
-##
-## It never starts by itself. [method tune_in] is the one way in and must be reached from a user gesture (an input event,
-## which [method handle_input] provides), because a browser keeps its audio locked until then.
-## The schedule comes from polling [member base_url] or from the host calling [method apply_now] with its own transport.
+## [method tune_in] is the only start and must come from a user gesture ([method handle_input]), because browsers lock audio until then.
+## The schedule comes from polling [member base_url] or from the host calling [method apply_now].
 
 signal tuned_changed(on: bool)
 signal track_started(track: Dictionary)
