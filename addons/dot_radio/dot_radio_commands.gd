@@ -120,4 +120,5 @@ func _call(req: Dictionary) -> DotResult:
 		return await send.call(req)
 	if api != null:
 		return api.handle(actor, req)
+	DotLog.warn(CHANNEL, "radio command with no send callable or api")
 	return DotResult.fail(DotError.CODE_UNSUPPORTED, "no server connection for the radio")
