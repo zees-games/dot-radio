@@ -22,4 +22,4 @@ A shared in-game radio station: the operator uploads MP3 and OGG tracks to the s
 - Nothing plays until `DotRadioClient.tune_in()` runs from a user gesture (`handle_input`, bound to the `radio_toggle` action). Never start it from `_ready`.
 - Secrets (admin token, TLS key) are read from files only, never env or argv.
 - The addon provides upload functionality only and ships no audio; the operator is responsible for the rights to what they broadcast. Keep that in the README.
-- Validate: import, `--check-only` on every `.gd`, then `res://examples/radio_selftest.tscn` (8 sections, 143 checks), all through `heavy`. One engine line, `Failed to decode mp3 file`, is expected on stderr: it is the check that a file with MP3 magic bytes but junk inside is refused. CI is the shared dot-ci `@v1`.
+- Validate: import, `--check-only` on every `.gd`, then `res://examples/radio_selftest.tscn` (the `radio_selftest` suite, the only one in `examples/`), all through `heavy`. One engine line, `Failed to decode mp3 file`, is expected on stderr: it is the check that a file with MP3 magic bytes but junk inside is refused. CI is the shared dot-ci `@v1`.
