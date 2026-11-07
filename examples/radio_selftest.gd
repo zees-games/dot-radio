@@ -3,8 +3,8 @@ extends Node
 ## Headless radio check: library, schedule and seek math, API permissions, HTTP round trip, client on a null sink, chat commands.
 ## Run: godot --headless --path . res://examples/radio_selftest.tscn
 
-const SECTIONS := 8
-const CHECKS := 150
+const SECTIONS := 10
+const CHECKS := 176
 const BASE := "user://radio_selftest"
 const FIX := "res://examples/fixtures/"
 
@@ -29,6 +29,8 @@ func _ready() -> void:
 	await _test_client()
 	await _test_client_http()
 	await _test_commands()
+	_test_hud()
+	_test_replication()
 	_clean()
 	_line("")
 	_line("%d sections, %d passed, %d failed" % [_section_count, _passed, _failed])
@@ -662,6 +664,89 @@ class FakeRegistrar extends RefCounted:
 
 func _clean() -> void:
 	DotPaths.remove_tree(BASE)
+
+
+func _test_hud() -> void:
+	_section("listener hud")
+	_check(DotRadioHud.format_now({"id": ""}) == "Nothing playing", "an idle station reads Nothing playing")
+	_check(DotRadioHud.format_now({"id": "a", "title": "T", "artist": "Ar"}) == "Ar - T", "artist - title")
+	_check(DotRadioHud.format_now({"id": "a", "title": "T", "artist": ""}) == "T", "no artist shows the title alone")
+	_check(DotRadioHud.format_time(75.9) == "1:15" and DotRadioHud.format_time(-3) == "0:00", "time formats m:ss and clamps")
+	var c := DotRadioClient.new()
+	c.bind_input = false
+	c.sink = DotRadioSinkNull.new()
+	add_child(c)
+	c.set_process(false)
+	var hud := DotRadioHud.new()
+	add_child(hud)
+	hud.bind(c)
+	c.apply_now({"id": "a", "title": "T", "artist": "Ar", "duration": 10.0, "position": 2.0, "next": {"id": "b", "title": "N", "artist": ""}})
+	_check(hud.title_label.text == "Ar - T" and hud.next_label.text == "Next: N" and hud.next_label.visible, "now_updated fills the title and the next line")
+	_check(is_equal_approx(hud.progress.max_value, 10.0) and hud.progress.value >= 2.0, "the bar tracks the position")
+	hud.tune_button.button_pressed = true
+	_check(c.tuned, "the tune button tunes in")
+	hud.tune_button.button_pressed = false
+	_check(not c.tuned, "and out")
+	hud.volume_slider.value = 0.25
+	hud.mute_button.button_pressed = true
+	_check(is_equal_approx(c.volume, 0.25) and c.muted, "the slider and mute toggle drive the client")
+	c.tune_in()
+	_check(hud.tune_button.button_pressed, "a tune-in from elsewhere shows on the button")
+	c.volume = 0.9
+	hud._process(0.0)
+	_check(is_equal_approx(hud.volume_slider.value, 0.9), "a volume change from the keyboard moves the slider")
+	hud.bind(null)
+	c.tune_out()
+	_check(hud.tune_button.button_pressed, "an unbound hud no longer follows the client")
+	hud.queue_free()
+	c.queue_free()
+
+
+func _test_replication() -> void:
+	_section("schedule replication")
+	var t := [100.0]
+	var st := DotRadioStation.new()
+	st.library = DotRadioLibrary.new()
+	st.library.root = BASE.path_join("repl")
+	var lib: DotRadioLibrary = st.library
+	var ta: Dictionary = lib.add("ra.mp3", _mp3, {"id": "ra", "title": "RA", "artist": "X"}).value
+	st.playlist.append("ra")
+	st.clock = func() -> float: return t[0]
+	var rep := DotRadioReplicator.new(st)
+	rep.clock = func() -> float: return t[0]
+	var got: Array = []
+	_check(not rep.update(), "no broadcast callable means nothing sent")
+	rep.broadcast = func(p: PackedByteArray) -> void: got.append(p)
+	st.start()
+	_check(rep.update() and got.size() == 1, "the first update sends")
+	_check(not rep.update() and got.size() == 1, "an unchanged schedule inside the heartbeat sends nothing")
+	t[0] += 6.0
+	_check(rep.update() and got.size() == 2, "the heartbeat re-sends an unchanged schedule")
+	var rev0 := st.rev
+	st.skip()
+	_check(st.rev != rev0 and rep.update() and got.size() == 3, "a revision change sends at once")
+	var dec := DotRadioReplicator.decode(got[0])
+	_check(dec.ok and dec.value["id"] == "ra" and dec.value["title"] == "RA" and not dec.value.has("v"), "decode returns the schedule without the version key")
+	_check(not DotRadioReplicator.decode("nope".to_utf8_buffer()).ok, "garbage is refused")
+	_check(DotRadioReplicator.decode(JSON.stringify({"v": 99, "id": "a"}).to_utf8_buffer()).error.code == DotError.CODE_VERSION, "another version is refused")
+	_check(not DotRadioReplicator.decode(JSON.stringify({"v": 1}).to_utf8_buffer()).ok, "a payload with no id is refused")
+	_check(not DotRadioReplicator.decode(PackedByteArray([123]).duplicate() + ("x".repeat(5000)).to_utf8_buffer()).ok, "an oversized payload is refused")
+	_check(rep.snapshot().size() > 0, "a joining peer gets a snapshot")
+	var c := DotRadioClient.new()
+	c.bind_input = false
+	c.sink = DotRadioSinkNull.new()
+	c.base_url = "http://127.0.0.1:1"
+	c.poll_schedule = false
+	add_child(c)
+	c.set_process(false)
+	var heard := []
+	c.now_updated.connect(func(n: Dictionary) -> void: heard.append(n["id"]))
+	_check(c.apply_wire(got[2], 0.05).ok and heard == ["ra"] and c.now_playing()["title"] == "RA", "the client applies a pushed schedule")
+	_check(not c.apply_wire("{".to_utf8_buffer()).ok and heard.size() == 1 and c.now_playing()["id"] == "ra", "a bad payload leaves the last schedule")
+	c.tune_in()
+	c.tick()
+	_check(c.now_playing()["id"] == "ra", "tuning in does not discard a pushed schedule or poll over it")
+	c.queue_free()
 
 
 func _section(title: String) -> void:
