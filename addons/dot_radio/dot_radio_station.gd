@@ -102,7 +102,8 @@ func now_playing(at: float = -1.0) -> Dictionary:
 		out["id"] = ""
 		return out
 	var track := library.get_track(_current)
-	out.merge({"id": _current, "title": track["title"], "artist": track["artist"], "kind": track["kind"], "size": track["size"],
+	out.merge({"id": _current, "title": track["title"], "artist": track["artist"], "album": track.get("album", ""),
+		"cover": not str(track.get("cover", "")).is_empty(), "kind": track["kind"], "size": track["size"],
 		"sha256": track["sha256"], "duration": track["duration"], "started_at": _started, "position": t - _started,
 		"rating": rating_of(_current)})
 	var nxt := peek_next()
