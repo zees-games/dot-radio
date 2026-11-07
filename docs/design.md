@@ -26,6 +26,8 @@ The server sends no audio frames. It serves files at `GET /track/<id>` (public, 
 4. `web/index.html`: drag and drop upload with progress, library, playlist, queue, now playing, skip, delete.
 5. `DotRadioClient` over a duck-typed sink: `DotRadioSinkNull` for tests, `DotRadioSinkGodot` for an `AudioStreamPlayer`. `tick()` compares the sink position with the schedule and re-seeks beyond `drift_threshold_sec`. `tune_in()` is the only way playback starts and is reached from an input event, the user gesture a browser needs to unlock audio.
 6. `DotRadioCommands`: `!radio`, `!song`, `!request`, `!rate`, with no dependency on dot-console or dot-chat.
+7. `DotRadioHud`: a code-built Control (tune button, artist - title, position bar, next line, volume, mute) bound to a client with `bind()`. Placement and theme are the game's.
+8. `DotRadioReplicator` (server) and `DotRadioClient.apply_wire` (client): push the schedule over the host's transport instead of polling `/now`. Transport-agnostic because dot-radio does not depend on dot-net: the host wraps the bytes in one reliable TO_CLIENT `DotNetMessage` with a byte-string body and sets `client.poll_schedule = false`. Audio still downloads over HTTP.
 
 ## Validation
 
@@ -37,8 +39,6 @@ dot-workbench has one page and no page registry, so there is nothing to register
 
 ## Not built
 
-- A listener-side UI (now-playing HUD, volume slider); the client exposes signals and `describe()`.
-- Replicating the schedule over dot-net.
 - Player requests and ratings over HTTP; they go through the game's server-side commands into `DotRadioApi`.
 - Reading ID3 or Vorbis tags for title and artist; the admin types them.
 - HTTP `Range`, resumable or chunked upload, `Expect: 100-continue`.
