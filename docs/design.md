@@ -27,8 +27,8 @@ The server sends no audio frames. It serves files at `GET /track/<id>` (public, 
 5. `DotRadioClient` over a duck-typed sink: `DotRadioSinkNull` for tests, `DotRadioSinkGodot` for an `AudioStreamPlayer`. `tick()` compares the sink position with the schedule and re-seeks beyond `drift_threshold_sec`. `tune_in()` is the only way playback starts and is reached from an input event, the user gesture a browser needs to unlock audio.
 6. `DotRadioCommands`: `!radio`, `!song`, `!request`, `!rate`, with no dependency on dot-console or dot-chat.
 7. `DotRadioHud`: a code-built Control (tune button, artist - title, position bar, next line, volume, mute) bound to a client with `bind()`. Placement and theme are the game's.
-8. `DotRadioReplicator` (server) and `DotRadioClient.apply_wire` (client): push the schedule over the host's transport instead of polling `/now`. Transport-agnostic because dot-radio does not depend on dot-net: the host wraps the bytes in one reliable TO_CLIENT `DotNetMessage` with a byte-string body and sets `client.poll_schedule = false`. Audio still downloads over HTTP.
-9. `DotRadioTags`: title and artist from ID3v2.2-2.4, ID3v1, Vorbis and Opus comments, bounded and best effort; `DotRadioLibrary.add` uses them when the admin typed nothing (the id still comes from the typed title or file name). Album, cover art and ReplayGain are not read.
+8. `DotRadioReplicator` (server) and `DotRadioClient.apply_wire` (client): push the schedule over the host's transport instead of polling `/now`. Transport-agnostic because dot-radio does not depend on dot-net: the host wraps the bytes in one reliable TO_CLIENT `DotNetMessage` with a byte-string body and sets `client.poll_schedule = false`. `examples/host/` has the reference wrapper (`RadioScheduleMessage`, `RadioNetHost`) and `radio_net_selftest` runs it between two real `DotNetManager`s. Audio still downloads over HTTP.
+9. `DotRadioTags`: title and artist from ID3v2.2-2.4, ID3v1, Vorbis and Opus comments, bounded and best effort; `DotRadioLibrary.add` uses them when the admin typed nothing (the id still comes from the typed title or file name). Album is read too (`TALB`/`TAL`, Vorbis `ALBUM`), and `DotRadioTags.cover` takes an ID3v2 `APIC`/`PIC` image if its bytes are PNG or JPEG and at most 512 KiB; the library stores it under `covers/` and serves it at `GET /cover/<id>`. OGG covers (base64 across page boundaries) and ReplayGain are not read.
 
 ## Validation
 
@@ -36,7 +36,7 @@ A file is accepted when its magic bytes say MP3 (`ID3` or an MPEG frame sync) or
 
 ## Workbench
 
-dot-workbench now has a page registry (`DotWorkbenchHttp.register_page`, branch admin-identity-thin) but radio has not yet registered its page there. `DotRadioHttp.mount(server, "/radio")` puts the whole radio on any `DotHttpServer`, including the workbench's, and `DotAdminIdentity` (which `DotWorkbenchIdentity` derives from) fits the identity hooks by duck typing. A tab inside the workbench page needs a page-contribution seam in dot-workbench first.
+`DotRadioWorkbench.register(workbench, radio_http, "/radio")` mounts the radio routes on the workbench's own server and registers the admin page in its page registry (`/pages/radio`, listed for tokens with the `radio` flag). Duck-typed: dot-radio does not depend on dot-workbench. The page is the same one with a `radio-root` meta that points its relative URLs at the mount. The radio keeps its own token or identity (`DotAdminIdentity` fits the hooks); the workbench token does not open it.
 
 ## Not built
 

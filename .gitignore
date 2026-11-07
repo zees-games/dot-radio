@@ -16,3 +16,6 @@ Thumbs.db
 
 # Linked addons
 /addons/dot_core
+# Linked for examples/radio_net_selftest only; the addon needs dot-core alone.
+/addons/dot_net
+/addons/dot_profile

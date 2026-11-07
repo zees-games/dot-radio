@@ -16,10 +16,10 @@ var max_total_bytes := 1024 * 1024 * 1024
 var max_track_seconds := 3600.0
 ## Callable(bytes, kind) -> seconds; replaceable so a test or a host with its own decoder need not decode.
 var probe: Callable = Callable()
-## Fill a missing title or artist from the file's ID3 or Vorbis tags.
+## Fill a missing title, artist or album from the file's ID3 or Vorbis tags, and keep an ID3 cover image.
 var read_tags := true
 
-## id -> track Dictionary {id, title, artist, kind, size, sha256, duration, added_at, added_by}.
+## id -> track Dictionary {id, title, artist, album, cover (mime or ""), kind, size, sha256, duration, added_at, added_by}.
 var _tracks: Dictionary = {}
 
 
@@ -47,7 +47,7 @@ func load_index() -> DotResult:
 
 
 ## Validates and stores one upload. Value on success: the track Dictionary.
-## [param meta] may carry `title`, `artist` and `id` (slugified). Missing ones are read from the file's own tags ([DotRadioTags]); the file name is the last fallback title. The default id comes from the typed title or the file name, never from a tag, so the same upload gets the same id with or without tags.
+## [param meta] may carry `title`, `artist`, `album` and `id` (slugified). Missing ones are read from the file's own tags ([DotRadioTags]); the file name is the last fallback title. The default id comes from the typed title or the file name, never from a tag, so the same upload gets the same id with or without tags.
 func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: String = "") -> DotResult:
 	if bytes.is_empty():
 		return DotResult.fail(DotError.CODE_INVALID, "empty upload")
@@ -58,6 +58,7 @@ func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: S
 		return DotResult.fail(DotError.CODE_INVALID, "only MP3 and OGG files are accepted")
 	var title := str(meta.get("title", "")).strip_edges()
 	var artist := str(meta.get("artist", "")).strip_edges()
+	var album := str(meta.get("album", "")).strip_edges()
 	if title.is_empty():
 		title = file_name.get_file().get_basename().strip_edges()
 	var id := DotPaths.slugify(str(meta.get("id", title)), 64)
@@ -66,6 +67,9 @@ func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: S
 		title = tags["title"]
 	if artist.is_empty():
 		artist = str(tags.get("artist", ""))
+	if album.is_empty():
+		album = str(tags.get("album", ""))
+	var pic: Dictionary = DotRadioTags.cover(bytes, kind) if read_tags else {}
 	if id.is_empty():
 		return DotResult.fail(DotError.CODE_INVALID, "the track needs a name with letters or digits")
 	if _tracks.has(id):
@@ -87,8 +91,17 @@ func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: S
 		return DotResult.fail(DotError.CODE_IO, "cannot write the track file", error_string(FileAccess.get_open_error()))
 	f.store_buffer(bytes)
 	f.close()
+	var cover_mime := ""
+	if not pic.is_empty():
+		cover_mime = str(pic["mime"])
+		var cf := FileAccess.open(cover_path(id, cover_mime), FileAccess.WRITE) if DotPaths.ensure_dir(root.path_join("covers")).ok else null
+		if cf == null:
+			cover_mime = ""
+		else:
+			cf.store_buffer(pic["data"])
+			cf.close()
 	var track := {
-		"id": id, "title": title, "artist": artist, "kind": kind,
+		"id": id, "title": title, "artist": artist, "album": album, "cover": cover_mime, "kind": kind,
 		"size": bytes.size(), "sha256": DotHash.sha256_bytes(bytes), "duration": snappedf(float(seconds), 0.001),
 		"added_at": int(Time.get_unix_time_from_system()), "added_by": by,
 	}
@@ -97,6 +110,8 @@ func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: S
 	if not saved.ok:
 		_tracks.erase(id)
 		DirAccess.remove_absolute(path_of(id, kind))
+		if not cover_mime.is_empty():
+			DirAccess.remove_absolute(cover_path(id, cover_mime))
 		return saved
 	DotLog.info(CHANNEL, "track added", {"id": id, "kind": kind, "bytes": bytes.size(), "by": by})
 	track_added.emit(track.duplicate())
@@ -109,17 +124,19 @@ func remove(id: String) -> DotResult:
 	var track: Dictionary = _tracks[id]
 	_tracks.erase(id)
 	DirAccess.remove_absolute(path_of(id, str(track["kind"])))
+	if not str(track.get("cover", "")).is_empty():
+		DirAccess.remove_absolute(cover_path(id, str(track["cover"])))
 	var saved := _save_index()
 	DotLog.info(CHANNEL, "track removed", {"id": id})
 	track_removed.emit(id)
 	return saved
 
 
-## Changes the title and artist only; the id and the file never change.
+## Changes the title, artist and album only; the id and the file never change.
 func update(id: String, fields: Dictionary) -> DotResult:
 	if not _tracks.has(id):
 		return DotResult.fail(DotError.CODE_INVALID, "no track '%s'" % id)
-	for k in ["title", "artist"]:
+	for k in ["title", "artist", "album"]:
 		if fields.has(k):
 			var v := str(fields[k]).strip_edges()
 			if k == "title" and v.is_empty():
@@ -161,6 +178,19 @@ func path_of(id: String, kind: String = "") -> String:
 	if kind.is_empty() and _tracks.has(id):
 		kind = str(_tracks[id]["kind"])
 	return root.path_join("tracks").path_join("%s.%s" % [id, kind])
+
+
+func cover_path(id: String, mime: String) -> String:
+	return root.path_join("covers").path_join("%s.%s" % [id, "png" if mime == "image/png" else "jpg"])
+
+
+## {"mime", "data"} of a track's cover image, or a failure when it has none.
+func read_cover(id: String) -> DotResult:
+	var mime := str(get_track(id).get("cover", ""))
+	if mime.is_empty():
+		return DotResult.fail(DotError.CODE_INVALID, "track '%s' has no cover" % id)
+	var bytes := DotPaths.read_bytes(cover_path(id, mime))
+	return DotResult.success({"mime": mime, "data": bytes.value}) if bytes.ok else bytes
 
 
 func read_bytes(id: String) -> DotResult:

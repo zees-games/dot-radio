@@ -2,7 +2,7 @@ class_name DotRadioHttp
 extends RefCounted
 
 ## Mounts a DotRadioApi on a DotHttpServer: the admin page, bearer-token routes, and the public now-playing and track-file routes clients use. Off by default.
-## Public (no token, CORS open): GET /now, /tracks, /track/<id>. Admin (Bearer): /api, /api/<op>, PUT /api/tracks/<name>, DELETE /api/tracks/<id>.
+## Public (no token, CORS open): GET /now, /tracks, /track/<id>, /cover/<id>. Admin (Bearer): /api, /api/<op>, PUT /api/tracks/<name>, DELETE /api/tracks/<id>.
 ## [member base] prefixes every route so the radio can share a server with other pages.
 
 const CHANNEL := "radio"
@@ -47,6 +47,7 @@ func mount(on: DotHttpServer, prefix: String = "") -> void:
 	on.route("GET", base + "/index.html", _on_page)
 	on.route("GET", base + "/now", _on_now)
 	on.route("GET", base + "/tracks", _on_tracks)
+	on.route_prefix("GET", base + "/cover", _on_cover)
 	on.route_prefix("GET", base + "/track", _on_file)
 	on.route("POST", base + "/api", _on_envelope)
 	for m in ["GET", "POST", "PUT", "DELETE"]:
@@ -147,6 +148,16 @@ func _on_file(req: DotHttpRequest) -> DotHttpResponse:
 	return _public(r, false)
 
 
+func _on_cover(req: DotHttpRequest) -> DotHttpResponse:
+	var cov := api.library.read_cover(req.rest.trim_prefix("/"))
+	if not cov.ok:
+		return _public(DotHttpResponse.error(404), false)
+	var r := DotHttpResponse.make(200, cov.value["data"], str(cov.value["mime"]))
+	r.headers["Cache-Control"] = "public, max-age=3600"
+	r.headers["X-Content-Type-Options"] = "nosniff"
+	return _public(r, false)
+
+
 func _on_envelope(req: DotHttpRequest) -> DotHttpResponse:
 	var auth: Variant = _gate(req)
 	if auth is DotHttpResponse:
@@ -173,7 +184,7 @@ func _on_rest(req: DotHttpRequest) -> DotHttpResponse:
 			if seg[0] != "tracks" or seg.size() < 2:
 				return _reply(DotResult.fail(DotError.CODE_INVALID, "PUT /api/tracks/<file name> with the audio as the body"))
 			var name := "/".join(seg.slice(1))
-			return _reply(api.upload_bytes(auth.value, name, req.body, {"title": str(req.query.get("title", "")), "artist": str(req.query.get("artist", ""))}))
+			return _reply(api.upload_bytes(auth.value, name, req.body, {"title": str(req.query.get("title", "")), "artist": str(req.query.get("artist", "")), "album": str(req.query.get("album", ""))}))
 		"DELETE":
 			if seg[0] != "tracks" or seg.size() != 2:
 				return DotHttpResponse.error(404)

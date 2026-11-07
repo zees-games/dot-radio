@@ -95,8 +95,10 @@ td.act button + button { margin-left:4px; }
 "use strict";
 const $ = id => document.getElementById(id);
 let token = sessionStorage.getItem("radio-token") || "";
+// A host that serves this page from elsewhere (the workbench registry) injects <meta name="radio-root" content="/radio/"> so the relative api/ and track/ URLs still reach the radio routes.
+const root = new URL(document.querySelector('meta[name="radio-root"]')?.content || ".", location.href);
 let tracks = [], view = {playlist: [], queue: []}, now = {}, skew = 0;
-const api = (path, opt = {}) => fetch(new URL(path, location.href), {...opt, headers: {Authorization: "Bearer " + token, ...(opt.headers || {})}})
+const api = (path, opt = {}) => fetch(new URL(path, root), {...opt, headers: {Authorization: "Bearer " + token, ...(opt.headers || {})}})
   .then(async r => { const j = await r.json().catch(() => ({})); if (!j.ok) throw new Error(j.error ? j.error.message : r.status + " " + r.statusText); return j.value; });
 const op = (o, extra = {}) => api("api", {method: "POST", body: JSON.stringify({op: o, ...extra})});
 const say = (msg, bad) => { const s = $("status"); s.textContent = msg; s.className = bad ? "err" : "ok"; };
@@ -147,7 +149,7 @@ setInterval(() => { if (token) refresh().catch(() => {}); }, 10000);
 function upload(file) {
   const row = document.createElement("div"); row.className = "muted"; row.textContent = file.name + " ..."; $("uploads").prepend(row);
   const x = new XMLHttpRequest();
-  x.open("PUT", new URL("api/tracks/" + encodeURIComponent(file.name), location.href) + "?title=" + encodeURIComponent(file.name.replace(/\.[^.]+$/, "")));
+  x.open("PUT", new URL("api/tracks/" + encodeURIComponent(file.name), root) + "?title=" + encodeURIComponent(file.name.replace(/\.[^.]+$/, "")));
   x.setRequestHeader("Authorization", "Bearer " + token);
   x.upload.onprogress = e => { row.textContent = file.name + " " + Math.round(e.loaded / e.total * 100) + "%"; };
   x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (_) {} row.className = j.ok ? "ok" : "err"; row.textContent = file.name + (j.ok ? " added" : ": " + (j.error ? j.error.message : x.status)); refresh().catch(() => {}); };
