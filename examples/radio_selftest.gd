@@ -4,7 +4,7 @@ extends Node
 ## Run: godot --headless --path . res://examples/radio_selftest.tscn
 
 const SECTIONS := 8
-const CHECKS := 143
+const CHECKS := 150
 const BASE := "user://radio_selftest"
 const FIX := "res://examples/fixtures/"
 
@@ -289,6 +289,24 @@ func _test_api() -> void:
 	_check(_code(plain.authenticate("anything")) == DotError.CODE_AUTH, "no configured token refuses everything")
 	api.identity = func(tk: String) -> Variant: return "carol" if tk == "carol-session" else null
 	_check(api.authenticate("carol-session").value == "carol" and not api.is_admin("carol"), "an identity hook yields an actor, who is not admin unless permit says so")
+	# the shared dot-core gate (DotAdminIdentity) with the radio flag
+	var gate := DotAdminIdentity.new()
+	gate.channel = "radio"
+	gate.flags = PackedStringArray(["radio"])
+	gate.admin_uids = PackedStringArray(["backbone:a"])
+	gate.resolver = func(tk: String) -> Variant: return {"uid": "backbone:a"} if tk == "adm" else ({"uid": "backbone:u"} if tk == "usr" else ({"uid": "guest:g", "is_guest": true} if tk == "gst" else null))
+	var gated := _api("api_gate", t)
+	gated.identity = gate.authenticate
+	gated.permit = gate.permit
+	var adm := gated.authenticate("adm")
+	_check(adm.ok and adm.value == "id:backbone:a" and gated.is_admin(adm.value), "DotAdminIdentity admits a listed admin as a radio admin")
+	_check(_code(gated.authenticate("usr")) == DotError.CODE_AUTH, "a signed-in non-admin is not admitted by the gate")
+	_check(_code(gated.authenticate("gst")) == DotError.CODE_AUTH and _code(gated.authenticate("nobody")) == DotError.CODE_AUTH, "a guest and an unknown token are refused")
+	_check(not gated.is_admin("id:backbone:u") and not gated.is_admin("stranger"), "an actor the gate did not admit holds no radio flag")
+	_check(gated.authenticate("s3cret").value == DotRadioApi.TOKEN_ACTOR, "the admin token keeps working beside the gate")
+	gate.flags = PackedStringArray()
+	_check(not gated.is_admin(adm.value), "an admitted identity with no flags is not admin (flags are empty by default)")
+	_check(_code(gated.handle(adm.value, {"op": "skip"})) == DotError.CODE_FORBIDDEN and gated.handle(adm.value, {"op": "now"}).ok, "such an actor still listens")
 	var big := _api("api2", t)
 	big.set_admin_token("x")
 	big.library.max_track_bytes = 100
