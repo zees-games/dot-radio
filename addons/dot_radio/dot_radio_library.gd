@@ -16,6 +16,8 @@ var max_total_bytes := 1024 * 1024 * 1024
 var max_track_seconds := 3600.0
 ## Callable(bytes, kind) -> seconds; replaceable so a test or a host with its own decoder need not decode.
 var probe: Callable = Callable()
+## Fill a missing title or artist from the file's ID3 or Vorbis tags.
+var read_tags := true
 
 ## id -> track Dictionary {id, title, artist, kind, size, sha256, duration, added_at, added_by}.
 var _tracks: Dictionary = {}
@@ -45,7 +47,7 @@ func load_index() -> DotResult:
 
 
 ## Validates and stores one upload. Value on success: the track Dictionary.
-## [param meta] may carry `title`, `artist` and `id` (slugified); the file name is the fallback title.
+## [param meta] may carry `title`, `artist` and `id` (slugified). Missing ones are read from the file's own tags ([DotRadioTags]); the file name is the last fallback title. The default id comes from the typed title or the file name, never from a tag, so the same upload gets the same id with or without tags.
 func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: String = "") -> DotResult:
 	if bytes.is_empty():
 		return DotResult.fail(DotError.CODE_INVALID, "empty upload")
@@ -55,9 +57,15 @@ func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: S
 	if kind.is_empty():
 		return DotResult.fail(DotError.CODE_INVALID, "only MP3 and OGG files are accepted")
 	var title := str(meta.get("title", "")).strip_edges()
+	var artist := str(meta.get("artist", "")).strip_edges()
 	if title.is_empty():
 		title = file_name.get_file().get_basename().strip_edges()
 	var id := DotPaths.slugify(str(meta.get("id", title)), 64)
+	var tags := DotRadioTags.read(bytes, kind) if read_tags else {}
+	if str(meta.get("title", "")).strip_edges().is_empty() and not str(tags.get("title", "")).is_empty():
+		title = tags["title"]
+	if artist.is_empty():
+		artist = str(tags.get("artist", ""))
 	if id.is_empty():
 		return DotResult.fail(DotError.CODE_INVALID, "the track needs a name with letters or digits")
 	if _tracks.has(id):
@@ -80,7 +88,7 @@ func add(file_name: String, bytes: PackedByteArray, meta: Dictionary = {}, by: S
 	f.store_buffer(bytes)
 	f.close()
 	var track := {
-		"id": id, "title": title, "artist": str(meta.get("artist", "")).strip_edges(), "kind": kind,
+		"id": id, "title": title, "artist": artist, "kind": kind,
 		"size": bytes.size(), "sha256": DotHash.sha256_bytes(bytes), "duration": snappedf(float(seconds), 0.001),
 		"added_at": int(Time.get_unix_time_from_system()), "added_by": by,
 	}
