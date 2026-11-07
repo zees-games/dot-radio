@@ -28,6 +28,7 @@ The server sends no audio frames. It serves files at `GET /track/<id>` (public, 
 6. `DotRadioCommands`: `!radio`, `!song`, `!request`, `!rate`, with no dependency on dot-console or dot-chat.
 7. `DotRadioHud`: a code-built Control (tune button, artist - title, position bar, next line, volume, mute) bound to a client with `bind()`. Placement and theme are the game's.
 8. `DotRadioReplicator` (server) and `DotRadioClient.apply_wire` (client): push the schedule over the host's transport instead of polling `/now`. Transport-agnostic because dot-radio does not depend on dot-net: the host wraps the bytes in one reliable TO_CLIENT `DotNetMessage` with a byte-string body and sets `client.poll_schedule = false`. Audio still downloads over HTTP.
+9. `DotRadioTags`: title and artist from ID3v2.2-2.4, ID3v1, Vorbis and Opus comments, bounded and best effort; `DotRadioLibrary.add` uses them when the admin typed nothing (the id still comes from the typed title or file name). Album, cover art and ReplayGain are not read.
 
 ## Validation
 
@@ -35,12 +36,11 @@ A file is accepted when its magic bytes say MP3 (`ID3` or an MPEG frame sync) or
 
 ## Workbench
 
-dot-workbench has one page and no page registry, so there is nothing to register with. `DotRadioHttp.mount(server, "/radio")` puts the whole radio on any `DotHttpServer`, including the workbench's, and `DotAdminIdentity` (which `DotWorkbenchIdentity` derives from) fits the identity hooks by duck typing. A tab inside the workbench page needs a page-contribution seam in dot-workbench first.
+dot-workbench now has a page registry (`DotWorkbenchHttp.register_page`, branch admin-identity-thin) but radio has not yet registered its page there. `DotRadioHttp.mount(server, "/radio")` puts the whole radio on any `DotHttpServer`, including the workbench's, and `DotAdminIdentity` (which `DotWorkbenchIdentity` derives from) fits the identity hooks by duck typing. A tab inside the workbench page needs a page-contribution seam in dot-workbench first.
 
 ## Not built
 
 - Player requests and ratings over HTTP; they go through the game's server-side commands into `DotRadioApi`.
-- Reading ID3 or Vorbis tags for title and artist; the admin types them.
 - HTTP `Range`, resumable or chunked upload, `Expect: 100-continue`.
 - Crossfade and gain normalisation.
 - Persisting volume and mute (belongs in dot-settings).

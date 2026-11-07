@@ -3,8 +3,8 @@ extends Node
 ## Headless radio check: library, schedule and seek math, API permissions, HTTP round trip, client on a null sink, chat commands.
 ## Run: godot --headless --path . res://examples/radio_selftest.tscn
 
-const SECTIONS := 10
-const CHECKS := 176
+const SECTIONS := 11
+const CHECKS := 188
 const BASE := "user://radio_selftest"
 const FIX := "res://examples/fixtures/"
 
@@ -31,6 +31,7 @@ func _ready() -> void:
 	await _test_commands()
 	_test_hud()
 	_test_replication()
+	_test_tags()
 	_clean()
 	_line("")
 	_line("%d sections, %d passed, %d failed" % [_section_count, _passed, _failed])
@@ -747,6 +748,94 @@ func _test_replication() -> void:
 	c.tick()
 	_check(c.now_playing()["id"] == "ra", "tuning in does not discard a pushed schedule or poll over it")
 	c.queue_free()
+
+
+static func _ss(n: int) -> PackedByteArray:
+	return PackedByteArray([(n >> 21) & 0x7F, (n >> 14) & 0x7F, (n >> 7) & 0x7F, n & 0x7F])
+
+
+static func _be4(n: int) -> PackedByteArray:
+	return PackedByteArray([(n >> 24) & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF])
+
+
+# An ID3v2 tag with [frames] as [id, body] pairs, for version 3 (plain sizes) or 4 (syncsafe).
+static func _id3(ver: int, frames: Array) -> PackedByteArray:
+	var body := PackedByteArray()
+	for f in frames:
+		var fb: PackedByteArray = f[1]
+		body.append_array(String(f[0]).to_ascii_buffer())
+		body.append_array(_be4(fb.size()) if ver == 3 else _ss(fb.size()))
+		body.append_array(PackedByteArray([0, 0]))
+		body.append_array(fb)
+	var out := "ID3".to_ascii_buffer()
+	out.append_array(PackedByteArray([ver, 0, 0]))
+	out.append_array(_ss(body.size()))
+	out.append_array(body)
+	return out
+
+
+static func _txt(enc: int, s: String) -> PackedByteArray:
+	var b := PackedByteArray([enc])
+	match enc:
+		0: b.append_array(s.to_ascii_buffer())
+		3: b.append_array(s.to_utf8_buffer())
+		1:
+			b.append_array(PackedByteArray([0xFF, 0xFE]))
+			for i in s.length():
+				var c := s.unicode_at(i)
+				b.append_array(PackedByteArray([c & 0xFF, c >> 8]))
+	return b
+
+
+static func _vorbis_tags(comments: Array) -> PackedByteArray:
+	var b := "OggS".to_ascii_buffer() + PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
+	var v := PackedByteArray([3]) + "vorbis".to_ascii_buffer()
+	var vendor := "t".to_ascii_buffer()
+	v.append_array(PackedByteArray([vendor.size(), 0, 0, 0]) + vendor)
+	v.append_array(PackedByteArray([comments.size(), 0, 0, 0]))
+	for c in comments:
+		var cb := String(c).to_utf8_buffer()
+		v.append_array(PackedByteArray([cb.size(), 0, 0, 0]) + cb)
+	return b + v
+
+
+func _test_tags() -> void:
+	_section("id3 and vorbis tags")
+	var t3 := DotRadioTags.read(_id3(3, [["TIT2", _txt(0, "Song")], ["TPE1", _txt(0, "Band")]]) + _mp3, "mp3")
+	_check(t3["title"] == "Song" and t3["artist"] == "Band", "ID3v2.3 title and artist")
+	var t4 := DotRadioTags.read(_id3(4, [["TXXX", _txt(0, "skip")], ["TIT2", _txt(3, "Caf\u00e9")], ["TPE1", _txt(3, "Z")]]) + _mp3, "mp3")
+	_check(t4["title"] == "Caf\u00e9" and t4["artist"] == "Z", "ID3v2.4 with UTF-8, past an unrelated frame")
+	var t16 := DotRadioTags.read(_id3(3, [["TIT2", _txt(1, "Wide")]]) + _mp3, "mp3")
+	_check(t16["title"] == "Wide", "UTF-16 with a byte order mark")
+	var v1 := PackedByteArray()
+	v1.resize(128)
+	v1.fill(0)
+	v1.encode_u8(0, 0x54)
+	v1.encode_u8(1, 0x41)
+	v1.encode_u8(2, 0x47)
+	for i in "Old".length():
+		v1[3 + i] = "Old".unicode_at(i)
+	for i in "Timer".length():
+		v1[33 + i] = "Timer".unicode_at(i)
+	var t1 := DotRadioTags.read(_mp3 + v1, "mp3")
+	_check(t1["title"] == "Old" and t1["artist"] == "Timer", "ID3v1 trailer when there is no v2")
+	_check(DotRadioTags.read(_mp3, "mp3") == {"title": "", "artist": ""}, "an untagged file gives empty fields")
+	var bad := _id3(3, [["TIT2", _txt(0, "Song")]])
+	bad = bad.slice(0, bad.size() - 3)
+	_check(DotRadioTags.read(bad, "mp3")["title"] == "", "a truncated frame is skipped, not read past the buffer")
+	_check(DotRadioTags.read(PackedByteArray([0x49, 0x44, 0x33, 3, 0, 0, 0x7F, 0x7F, 0x7F, 0x7F]), "mp3")["title"] == "", "a tag claiming a huge size is bounded by the buffer")
+	var ov := DotRadioTags.read(_vorbis_tags(["artist=Ogg Band", "TITLE=Ogg Song"]), "ogg")
+	_check(ov["title"] == "Ogg Song" and ov["artist"] == "Ogg Band", "Vorbis comments, any key case")
+	_check(DotRadioTags.read(_ogg, "ogg") == {"title": "", "artist": ""}, "an untagged OGG gives empty fields")
+	var lib := DotRadioLibrary.new()
+	lib.root = BASE.path_join("tags")
+	var added := lib.add("file_name.mp3", _id3(3, [["TIT2", _txt(0, "Tagged")], ["TPE1", _txt(0, "Someone")]]) + _mp3)
+	_check(added.ok and added.value["title"] == "Tagged" and added.value["artist"] == "Someone" and added.value["id"] == "file_name", "an upload takes its tags, and the id still comes from the file name")
+	var typed := lib.add("other.mp3", _id3(3, [["TIT2", _txt(0, "Tagged")], ["TPE1", _txt(0, "Someone")]]) + _mp3, {"title": "Typed"})
+	_check(typed.ok and typed.value["title"] == "Typed" and typed.value["artist"] == "Someone", "what the admin typed beats the tag")
+	lib.read_tags = false
+	var off := lib.add("third.mp3", _id3(3, [["TIT2", _txt(0, "Tagged")]]) + _mp3)
+	_check(off.ok and off.value["title"] == "third", "read_tags off keeps the file name")
 
 
 func _section(title: String) -> void:
