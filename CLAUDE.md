@@ -17,7 +17,7 @@ A shared in-game radio station: the operator uploads MP3 and OGG tracks to the s
 | `web/index.html` | the admin page: one file, no build |
 
 - The HTTP server is dot-core's `DotHttpServer`; this addon only mounts routes. Uploads are a raw-body `PUT /api/tracks/<name>`. Do not write a second server or a multipart parser here.
-- Admin identity is the api's `identity` and `permit` hooks. `DotWorkbenchIdentity` (dot-workbench) fits them with `flags` set to `["radio"]`; nothing here imports it.
+- Admin identity is the api's `identity` and `permit` hooks. dot-core's `DotAdminIdentity` (API level 29) fits them: set `resolver`, `admin_uids` or `admin_groups`, `flags = ["radio"]` (empty by default), `channel = "radio"`, then `api.identity = gate.authenticate; api.permit = gate.permit`. dot-workbench's `DotWorkbenchIdentity` is a subclass of it. The radio code does not wrap it; the selftest exercises the wiring.
 - Time on the wire is `position` (seconds into the track), not a timestamp: clients never need to agree with the server's wall clock.
 - Nothing plays until `DotRadioClient.tune_in()` runs from a user gesture (`handle_input`, bound to the `radio_toggle` action). Never start it from `_ready`.
 - Secrets (admin token, TLS key) are read from files only, never env or argv.

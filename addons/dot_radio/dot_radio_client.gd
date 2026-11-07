@@ -25,6 +25,8 @@ var fetcher: Callable = Callable()
 var cache_dir := "user://radio_cache"
 var max_cache_bytes := 128 * 1024 * 1024
 var poll_interval_sec := 5.0
+## False when the host pushes the schedule with [method apply_wire]; `base_url` is then only where tracks download from.
+var poll_schedule := true
 ## Playback further than this from the schedule is re-seeked.
 var drift_threshold_sec := 0.6
 ## Fetch the next track when this little of the current one is left.
@@ -120,7 +122,7 @@ func tune_in() -> void:
 	tuned = true
 	_apply_volume()
 	tuned_changed.emit(true)
-	if not base_url.is_empty():
+	if not base_url.is_empty() and poll_schedule:
 		# What was known before tuning out is stale; wait for the station's answer.
 		_now = {}
 		_poll()
@@ -147,6 +149,15 @@ func apply_now(now: Dictionary, latency: float = 0.0) -> void:
 	now_updated.emit(now)
 
 
+## Takes a schedule pushed by [DotRadioReplicator] (bytes from the host's own transport, e.g. a dot-net message). A bad payload is refused and the last schedule stays. Set `poll_schedule = false` so the client stops polling `/now`; audio still downloads from `base_url`.
+func apply_wire(payload: PackedByteArray, latency: float = 0.0) -> DotResult:
+	var res := DotRadioReplicator.decode(payload)
+	if not res.ok:
+		return res
+	apply_now(res.value, latency)
+	return res
+
+
 ## Seconds into the current track the station is at now; negative before it starts.
 func expected_position() -> float:
 	return _anchor_pos + (_clock() - _anchor_t)
@@ -168,7 +179,7 @@ func tick() -> void:
 	var id := str(_now.get("id", ""))
 	var over := not id.is_empty() and expected_position() >= float(_now.get("duration", 0.0))
 	var due := poll_interval_sec if not over else 1.0
-	if not base_url.is_empty() and not _polling and t - _last_poll >= due:
+	if not base_url.is_empty() and poll_schedule and not _polling and t - _last_poll >= due:
 		_poll()
 	if id.is_empty():
 		return

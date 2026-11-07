@@ -3,8 +3,8 @@ extends Node
 ## Headless radio check: library, schedule and seek math, API permissions, HTTP round trip, client on a null sink, chat commands.
 ## Run: godot --headless --path . res://examples/radio_selftest.tscn
 
-const SECTIONS := 8
-const CHECKS := 143
+const SECTIONS := 11
+const CHECKS := 188
 const BASE := "user://radio_selftest"
 const FIX := "res://examples/fixtures/"
 
@@ -29,6 +29,9 @@ func _ready() -> void:
 	await _test_client()
 	await _test_client_http()
 	await _test_commands()
+	_test_hud()
+	_test_replication()
+	_test_tags()
 	_clean()
 	_line("")
 	_line("%d sections, %d passed, %d failed" % [_section_count, _passed, _failed])
@@ -289,6 +292,24 @@ func _test_api() -> void:
 	_check(_code(plain.authenticate("anything")) == DotError.CODE_AUTH, "no configured token refuses everything")
 	api.identity = func(tk: String) -> Variant: return "carol" if tk == "carol-session" else null
 	_check(api.authenticate("carol-session").value == "carol" and not api.is_admin("carol"), "an identity hook yields an actor, who is not admin unless permit says so")
+	# the shared dot-core gate (DotAdminIdentity) with the radio flag
+	var gate := DotAdminIdentity.new()
+	gate.channel = "radio"
+	gate.flags = PackedStringArray(["radio"])
+	gate.admin_uids = PackedStringArray(["backbone:a"])
+	gate.resolver = func(tk: String) -> Variant: return {"uid": "backbone:a"} if tk == "adm" else ({"uid": "backbone:u"} if tk == "usr" else ({"uid": "guest:g", "is_guest": true} if tk == "gst" else null))
+	var gated := _api("api_gate", t)
+	gated.identity = gate.authenticate
+	gated.permit = gate.permit
+	var adm := gated.authenticate("adm")
+	_check(adm.ok and adm.value == "id:backbone:a" and gated.is_admin(adm.value), "DotAdminIdentity admits a listed admin as a radio admin")
+	_check(_code(gated.authenticate("usr")) == DotError.CODE_AUTH, "a signed-in non-admin is not admitted by the gate")
+	_check(_code(gated.authenticate("gst")) == DotError.CODE_AUTH and _code(gated.authenticate("nobody")) == DotError.CODE_AUTH, "a guest and an unknown token are refused")
+	_check(not gated.is_admin("id:backbone:u") and not gated.is_admin("stranger"), "an actor the gate did not admit holds no radio flag")
+	_check(gated.authenticate("s3cret").value == DotRadioApi.TOKEN_ACTOR, "the admin token keeps working beside the gate")
+	gate.flags = PackedStringArray()
+	_check(not gated.is_admin(adm.value), "an admitted identity with no flags is not admin (flags are empty by default)")
+	_check(_code(gated.handle(adm.value, {"op": "skip"})) == DotError.CODE_FORBIDDEN and gated.handle(adm.value, {"op": "now"}).ok, "such an actor still listens")
 	var big := _api("api2", t)
 	big.set_admin_token("x")
 	big.library.max_track_bytes = 100
@@ -644,6 +665,177 @@ class FakeRegistrar extends RefCounted:
 
 func _clean() -> void:
 	DotPaths.remove_tree(BASE)
+
+
+func _test_hud() -> void:
+	_section("listener hud")
+	_check(DotRadioHud.format_now({"id": ""}) == "Nothing playing", "an idle station reads Nothing playing")
+	_check(DotRadioHud.format_now({"id": "a", "title": "T", "artist": "Ar"}) == "Ar - T", "artist - title")
+	_check(DotRadioHud.format_now({"id": "a", "title": "T", "artist": ""}) == "T", "no artist shows the title alone")
+	_check(DotRadioHud.format_time(75.9) == "1:15" and DotRadioHud.format_time(-3) == "0:00", "time formats m:ss and clamps")
+	var c := DotRadioClient.new()
+	c.bind_input = false
+	c.sink = DotRadioSinkNull.new()
+	add_child(c)
+	c.set_process(false)
+	var hud := DotRadioHud.new()
+	add_child(hud)
+	hud.bind(c)
+	c.apply_now({"id": "a", "title": "T", "artist": "Ar", "duration": 10.0, "position": 2.0, "next": {"id": "b", "title": "N", "artist": ""}})
+	_check(hud.title_label.text == "Ar - T" and hud.next_label.text == "Next: N" and hud.next_label.visible, "now_updated fills the title and the next line")
+	_check(is_equal_approx(hud.progress.max_value, 10.0) and hud.progress.value >= 2.0, "the bar tracks the position")
+	hud.tune_button.button_pressed = true
+	_check(c.tuned, "the tune button tunes in")
+	hud.tune_button.button_pressed = false
+	_check(not c.tuned, "and out")
+	hud.volume_slider.value = 0.25
+	hud.mute_button.button_pressed = true
+	_check(is_equal_approx(c.volume, 0.25) and c.muted, "the slider and mute toggle drive the client")
+	c.tune_in()
+	_check(hud.tune_button.button_pressed, "a tune-in from elsewhere shows on the button")
+	c.volume = 0.9
+	hud._process(0.0)
+	_check(is_equal_approx(hud.volume_slider.value, 0.9), "a volume change from the keyboard moves the slider")
+	hud.bind(null)
+	c.tune_out()
+	_check(hud.tune_button.button_pressed, "an unbound hud no longer follows the client")
+	hud.queue_free()
+	c.queue_free()
+
+
+func _test_replication() -> void:
+	_section("schedule replication")
+	var t := [100.0]
+	var st := DotRadioStation.new()
+	st.library = DotRadioLibrary.new()
+	st.library.root = BASE.path_join("repl")
+	var lib: DotRadioLibrary = st.library
+	var ta: Dictionary = lib.add("ra.mp3", _mp3, {"id": "ra", "title": "RA", "artist": "X"}).value
+	st.playlist.append("ra")
+	st.clock = func() -> float: return t[0]
+	var rep := DotRadioReplicator.new(st)
+	rep.clock = func() -> float: return t[0]
+	var got: Array = []
+	_check(not rep.update(), "no broadcast callable means nothing sent")
+	rep.broadcast = func(p: PackedByteArray) -> void: got.append(p)
+	st.start()
+	_check(rep.update() and got.size() == 1, "the first update sends")
+	_check(not rep.update() and got.size() == 1, "an unchanged schedule inside the heartbeat sends nothing")
+	t[0] += 6.0
+	_check(rep.update() and got.size() == 2, "the heartbeat re-sends an unchanged schedule")
+	var rev0 := st.rev
+	st.skip()
+	_check(st.rev != rev0 and rep.update() and got.size() == 3, "a revision change sends at once")
+	var dec := DotRadioReplicator.decode(got[0])
+	_check(dec.ok and dec.value["id"] == "ra" and dec.value["title"] == "RA" and not dec.value.has("v"), "decode returns the schedule without the version key")
+	_check(not DotRadioReplicator.decode("nope".to_utf8_buffer()).ok, "garbage is refused")
+	_check(DotRadioReplicator.decode(JSON.stringify({"v": 99, "id": "a"}).to_utf8_buffer()).error.code == DotError.CODE_VERSION, "another version is refused")
+	_check(not DotRadioReplicator.decode(JSON.stringify({"v": 1}).to_utf8_buffer()).ok, "a payload with no id is refused")
+	_check(not DotRadioReplicator.decode(PackedByteArray([123]).duplicate() + ("x".repeat(5000)).to_utf8_buffer()).ok, "an oversized payload is refused")
+	_check(rep.snapshot().size() > 0, "a joining peer gets a snapshot")
+	var c := DotRadioClient.new()
+	c.bind_input = false
+	c.sink = DotRadioSinkNull.new()
+	c.base_url = "http://127.0.0.1:1"
+	c.poll_schedule = false
+	add_child(c)
+	c.set_process(false)
+	var heard := []
+	c.now_updated.connect(func(n: Dictionary) -> void: heard.append(n["id"]))
+	_check(c.apply_wire(got[2], 0.05).ok and heard == ["ra"] and c.now_playing()["title"] == "RA", "the client applies a pushed schedule")
+	_check(not c.apply_wire("{".to_utf8_buffer()).ok and heard.size() == 1 and c.now_playing()["id"] == "ra", "a bad payload leaves the last schedule")
+	c.tune_in()
+	c.tick()
+	_check(c.now_playing()["id"] == "ra", "tuning in does not discard a pushed schedule or poll over it")
+	c.queue_free()
+
+
+static func _ss(n: int) -> PackedByteArray:
+	return PackedByteArray([(n >> 21) & 0x7F, (n >> 14) & 0x7F, (n >> 7) & 0x7F, n & 0x7F])
+
+
+static func _be4(n: int) -> PackedByteArray:
+	return PackedByteArray([(n >> 24) & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF])
+
+
+# An ID3v2 tag with [frames] as [id, body] pairs, for version 3 (plain sizes) or 4 (syncsafe).
+static func _id3(ver: int, frames: Array) -> PackedByteArray:
+	var body := PackedByteArray()
+	for f in frames:
+		var fb: PackedByteArray = f[1]
+		body.append_array(String(f[0]).to_ascii_buffer())
+		body.append_array(_be4(fb.size()) if ver == 3 else _ss(fb.size()))
+		body.append_array(PackedByteArray([0, 0]))
+		body.append_array(fb)
+	var out := "ID3".to_ascii_buffer()
+	out.append_array(PackedByteArray([ver, 0, 0]))
+	out.append_array(_ss(body.size()))
+	out.append_array(body)
+	return out
+
+
+static func _txt(enc: int, s: String) -> PackedByteArray:
+	var b := PackedByteArray([enc])
+	match enc:
+		0: b.append_array(s.to_ascii_buffer())
+		3: b.append_array(s.to_utf8_buffer())
+		1:
+			b.append_array(PackedByteArray([0xFF, 0xFE]))
+			for i in s.length():
+				var c := s.unicode_at(i)
+				b.append_array(PackedByteArray([c & 0xFF, c >> 8]))
+	return b
+
+
+static func _vorbis_tags(comments: Array) -> PackedByteArray:
+	var b := "OggS".to_ascii_buffer() + PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0])
+	var v := PackedByteArray([3]) + "vorbis".to_ascii_buffer()
+	var vendor := "t".to_ascii_buffer()
+	v.append_array(PackedByteArray([vendor.size(), 0, 0, 0]) + vendor)
+	v.append_array(PackedByteArray([comments.size(), 0, 0, 0]))
+	for c in comments:
+		var cb := String(c).to_utf8_buffer()
+		v.append_array(PackedByteArray([cb.size(), 0, 0, 0]) + cb)
+	return b + v
+
+
+func _test_tags() -> void:
+	_section("id3 and vorbis tags")
+	var t3 := DotRadioTags.read(_id3(3, [["TIT2", _txt(0, "Song")], ["TPE1", _txt(0, "Band")]]) + _mp3, "mp3")
+	_check(t3["title"] == "Song" and t3["artist"] == "Band", "ID3v2.3 title and artist")
+	var t4 := DotRadioTags.read(_id3(4, [["TXXX", _txt(0, "skip")], ["TIT2", _txt(3, "Caf\u00e9")], ["TPE1", _txt(3, "Z")]]) + _mp3, "mp3")
+	_check(t4["title"] == "Caf\u00e9" and t4["artist"] == "Z", "ID3v2.4 with UTF-8, past an unrelated frame")
+	var t16 := DotRadioTags.read(_id3(3, [["TIT2", _txt(1, "Wide")]]) + _mp3, "mp3")
+	_check(t16["title"] == "Wide", "UTF-16 with a byte order mark")
+	var v1 := PackedByteArray()
+	v1.resize(128)
+	v1.fill(0)
+	v1.encode_u8(0, 0x54)
+	v1.encode_u8(1, 0x41)
+	v1.encode_u8(2, 0x47)
+	for i in "Old".length():
+		v1[3 + i] = "Old".unicode_at(i)
+	for i in "Timer".length():
+		v1[33 + i] = "Timer".unicode_at(i)
+	var t1 := DotRadioTags.read(_mp3 + v1, "mp3")
+	_check(t1["title"] == "Old" and t1["artist"] == "Timer", "ID3v1 trailer when there is no v2")
+	_check(DotRadioTags.read(_mp3, "mp3") == {"title": "", "artist": ""}, "an untagged file gives empty fields")
+	var bad := _id3(3, [["TIT2", _txt(0, "Song")]])
+	bad = bad.slice(0, bad.size() - 3)
+	_check(DotRadioTags.read(bad, "mp3")["title"] == "", "a truncated frame is skipped, not read past the buffer")
+	_check(DotRadioTags.read(PackedByteArray([0x49, 0x44, 0x33, 3, 0, 0, 0x7F, 0x7F, 0x7F, 0x7F]), "mp3")["title"] == "", "a tag claiming a huge size is bounded by the buffer")
+	var ov := DotRadioTags.read(_vorbis_tags(["artist=Ogg Band", "TITLE=Ogg Song"]), "ogg")
+	_check(ov["title"] == "Ogg Song" and ov["artist"] == "Ogg Band", "Vorbis comments, any key case")
+	_check(DotRadioTags.read(_ogg, "ogg") == {"title": "", "artist": ""}, "an untagged OGG gives empty fields")
+	var lib := DotRadioLibrary.new()
+	lib.root = BASE.path_join("tags")
+	var added := lib.add("file_name.mp3", _id3(3, [["TIT2", _txt(0, "Tagged")], ["TPE1", _txt(0, "Someone")]]) + _mp3)
+	_check(added.ok and added.value["title"] == "Tagged" and added.value["artist"] == "Someone" and added.value["id"] == "file_name", "an upload takes its tags, and the id still comes from the file name")
+	var typed := lib.add("other.mp3", _id3(3, [["TIT2", _txt(0, "Tagged")], ["TPE1", _txt(0, "Someone")]]) + _mp3, {"title": "Typed"})
+	_check(typed.ok and typed.value["title"] == "Typed" and typed.value["artist"] == "Someone", "what the admin typed beats the tag")
+	lib.read_tags = false
+	var off := lib.add("third.mp3", _id3(3, [["TIT2", _txt(0, "Tagged")]]) + _mp3)
+	_check(off.ok and off.value["title"] == "third", "read_tags off keeps the file name")
 
 
 func _section(title: String) -> void:

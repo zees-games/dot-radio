@@ -21,11 +21,14 @@ The server sends no audio frames. It serves files at `GET /track/<id>` (public, 
 ## Layers
 
 1. `DotRadioCodec`, `DotRadioLibrary`, `DotRadioStation`: no transport, no nodes, testable headless with a fake clock and a fake length probe.
-2. `DotRadioApi`: a request dictionary in, a `DotResult` out. Listener ops need any actor; admin ops need the `radio` flag. Actors come from the admin token or from the `identity` hook; `permit` is the host's check, as in dot-workbench.
+2. `DotRadioApi`: a request dictionary in, a `DotResult` out. Listener ops need any actor; admin ops need the `radio` flag. Actors come from the admin token or from the `identity` hook; `permit` is the host's check. dot-core's `DotAdminIdentity` (flags `["radio"]`) is the shared gate for both hooks, the same one dot-workbench's `DotWorkbenchIdentity` derives from.
 3. `DotRadioHttp`: routes on dot-core's `DotHttpServer`. Off by default, loopback by default, token from a file only, bad tokens throttled with `DotRateLimiter`. Upload is a raw-body `PUT`: `DotHttpServer` already reads bodies up to `max_body_bytes` (1 MiB by default; the radio raises it to fit a track), and a multipart parser would be a second HTTP implementation. `Expect: 100-continue` and `Range` are not supported by `DotHttpServer`. `read_timeout_sec` is raised to `upload_timeout_sec` for slow uplinks, which also lengthens the time a stalled connection holds a slot.
 4. `web/index.html`: drag and drop upload with progress, library, playlist, queue, now playing, skip, delete.
 5. `DotRadioClient` over a duck-typed sink: `DotRadioSinkNull` for tests, `DotRadioSinkGodot` for an `AudioStreamPlayer`. `tick()` compares the sink position with the schedule and re-seeks beyond `drift_threshold_sec`. `tune_in()` is the only way playback starts and is reached from an input event, the user gesture a browser needs to unlock audio.
 6. `DotRadioCommands`: `!radio`, `!song`, `!request`, `!rate`, with no dependency on dot-console or dot-chat.
+7. `DotRadioHud`: a code-built Control (tune button, artist - title, position bar, next line, volume, mute) bound to a client with `bind()`. Placement and theme are the game's.
+8. `DotRadioReplicator` (server) and `DotRadioClient.apply_wire` (client): push the schedule over the host's transport instead of polling `/now`. Transport-agnostic because dot-radio does not depend on dot-net: the host wraps the bytes in one reliable TO_CLIENT `DotNetMessage` with a byte-string body and sets `client.poll_schedule = false`. Audio still downloads over HTTP.
+9. `DotRadioTags`: title and artist from ID3v2.2-2.4, ID3v1, Vorbis and Opus comments, bounded and best effort; `DotRadioLibrary.add` uses them when the admin typed nothing (the id still comes from the typed title or file name). Album, cover art and ReplayGain are not read.
 
 ## Validation
 
@@ -33,15 +36,11 @@ A file is accepted when its magic bytes say MP3 (`ID3` or an MPEG frame sync) or
 
 ## Workbench
 
-dot-workbench has one page and no page registry, so there is nothing to register with. `DotRadioHttp.mount(server, "/radio")` puts the whole radio on any `DotHttpServer`, including the workbench's, and `DotWorkbenchIdentity` fits the identity hooks by duck typing. A tab inside the workbench page needs a page-contribution seam in dot-workbench first.
+dot-workbench now has a page registry (`DotWorkbenchHttp.register_page`, branch admin-identity-thin) but radio has not yet registered its page there. `DotRadioHttp.mount(server, "/radio")` puts the whole radio on any `DotHttpServer`, including the workbench's, and `DotAdminIdentity` (which `DotWorkbenchIdentity` derives from) fits the identity hooks by duck typing. A tab inside the workbench page needs a page-contribution seam in dot-workbench first.
 
 ## Not built
 
-- A listener-side UI (now-playing HUD, volume slider); the client exposes signals and `describe()`.
-- Replicating the schedule over dot-net.
 - Player requests and ratings over HTTP; they go through the game's server-side commands into `DotRadioApi`.
-- Reading ID3 or Vorbis tags for title and artist; the admin types them.
 - HTTP `Range`, resumable or chunked upload, `Expect: 100-continue`.
 - Crossfade and gain normalisation.
 - Persisting volume and mute (belongs in dot-settings).
-- A shared admin-identity gate in dot-core: the radio reuses dot-workbench's hooks instead of copying them.
