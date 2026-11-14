@@ -1,8 +1,13 @@
 # dot-radio
 
-An in-game radio for a game server. The operator uploads MP3 and OGG tracks through a small admin page (or the JSON API); the server plays them as one station, and every connected player who tunes in hears the same track at the same point. See [docs/design.md](docs/design.md).
+An in-game radio for a game server. The operator uploads MP3 and OGG tracks through a small admin page (or the JSON API). The server plays them as one station, and every player who tunes in hears the same track at the same point. Design notes: [docs/design.md](docs/design.md).
 
 **Licensing: this addon only provides upload functionality. It ships no audio and does not supply, license or check the rights to any music. Operators supply their own audio and are responsible for having the right to broadcast it.**
+
+## Install
+
+1. Get [Godot 4.7](https://godotengine.org/download).
+2. Either use [dot-bootstrap](https://github.com/modcommunity/dot-bootstrap), which clones every project and links the addons, or copy `addons/dot_radio/` and [dot-core](https://github.com/modcommunity/dot-core)'s `addons/dot_core/` into your project and enable dot-radio in *Project > Project Settings > Plugins*.
 
 ## Server
 
@@ -15,26 +20,40 @@ radio.poll()
 
 ```yaml
 radio:
-  enabled: true            # off by default
-  bind: 127.0.0.1          # loopback unless a proxy or TLS is in front
+  enabled: true
+  bind: 127.0.0.1
   port: 8791
-  token_file: /etc/dot/radio.token   # the admin token lives in a file, never in the yml, env or argv
+  token_file: /etc/dot/radio.token
   max_track_mb: 20
   upload_timeout_sec: 120
 ```
 
-Open `http://127.0.0.1:8791/`, paste the token, drop files. Admin routes need `Authorization: Bearer <token>`.
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | off | The radio does nothing unless set to true. |
+| `bind` | `127.0.0.1` | Loopback only. Change it when a proxy or TLS is in front. |
+| `port` | 8791 | HTTP port. |
+| `token_file` | none | File holding the admin token. The token is never read from the yml, environment or command line. |
+| `max_track_mb` | 20 | Largest upload in megabytes. |
+| `upload_timeout_sec` | 120 | Seconds to wait for an upload. |
 
-- public: `GET /now`, `GET /tracks`, `GET /track/<id>`
-- admin: `POST /api` with `{"op": ...}`, `GET|POST /api/<op>`, `PUT /api/tracks/<file name>?title=&artist=` (raw body), `DELETE /api/tracks/<id>`
+Open `http://127.0.0.1:8791/`, paste the token and drop files. Admin routes need `Authorization: Bearer <token>`.
+
+| Routes | Who |
+| --- | --- |
+| `GET /now`, `GET /tracks`, `GET /track/<id>` | Anyone |
+| `POST /api` with `{"op": ...}`, `GET\|POST /api/<op>`, `PUT /api/tracks/<file name>?title=&artist=` (raw body), `DELETE /api/tracks/<id>` | Admin |
 
 ```bash
 curl -T song.mp3 -H "Authorization: Bearer $(cat radio.token)" "http://127.0.0.1:8791/api/tracks/song.mp3?title=Song"
 ```
 
-Ops: `now tracks playlist request rate` for listeners; `upload delete edit reorder playlist_add playlist_remove queue dequeue clear_queue skip mode start stop` for admins.
+| Ops | Who |
+| --- | --- |
+| `now`, `tracks`, `playlist`, `request`, `rate` | Listeners |
+| `upload`, `delete`, `edit`, `reorder`, `playlist_add`, `playlist_remove`, `queue`, `dequeue`, `clear_queue`, `skip`, `mode`, `start`, `stop` | Admin |
 
-To share another `DotHttpServer` (such as the workbench's) instead of opening a second port: `radio.mount(server, "/radio")`.
+To share another `DotHttpServer` instead of opening a second port, call `radio.mount(server, "/radio")`.
 
 ## Client
 
@@ -45,18 +64,24 @@ radio.sink = DotRadioSinkGodot.new()   # then radio.sink.attach(self)
 add_child(radio)
 ```
 
-Playback starts only when the player presses the `radio_toggle` key (default F8; `radio_mute` F9, `radio_volume_up` and `radio_volume_down` Page Up and Page Down). The actions are added to the InputMap only when the project has not defined them, so they can be rebound like any other. `DotRadioCommands` gives `!radio`, `!song`, `!request <title>` and `!rate up|down` to any command registry with `add_command(name, help, fn)`.
+Playback starts only when the player presses the toggle key.
+
+| Action | Default key |
+| --- | --- |
+| `radio_toggle` | F8 |
+| `radio_mute` | F9 |
+| `radio_volume_up` / `radio_volume_down` | Page Up / Page Down |
+
+The actions are added to the InputMap only if your project has not defined them, so players can rebind them. `DotRadioCommands` adds `!radio`, `!song`, `!request <title>` and `!rate up|down` to any command registry with `add_command(name, help, fn)`.
 
 Web builds work: files are fetched with `HTTPRequest`, and the public routes allow any origin.
 
-## Test
+## Testing
 
-```bash
-ln -s ../../dot-core/addons/dot_core addons/dot_core
-godot --headless --path . --import
-godot --headless --path . res://examples/radio_selftest.tscn
-```
+Link dot-core into `addons/`, import the project once, then run `examples/radio_selftest.tscn` headless with Godot. The two files in `examples/fixtures/` are sine tones generated for the tests.
 
-The two files in `examples/fixtures/` are sine tones generated for the tests; they carry no licence concerns.
+## Status and licence
 
-MIT licensed.
+Part of the TMC **dot-\*** family of Godot addons. Written with Claude Code and maintained by `gamemann`. Every addon has headless tests, but little of this has been played by real users yet, so expect rough edges and please [open an issue](https://github.com/modcommunity/dot-radio/issues) when you hit one.
+
+MIT licence, see [LICENSE](LICENSE). The only closed part of the TMC platform is the web back end; you can use your own instead of TMC's.
