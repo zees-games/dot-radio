@@ -111,6 +111,16 @@ func _test_end_to_end() -> void:
 	server.send(RadioScheduleMessage.make("nope".to_utf8_buffer()), 2)
 	_pump(wire, server, peer)
 	_check(follower.refused == 1 and str(rc.now_playing().get("id", "")) == rev_id, "garbage is counted and the last schedule stays")
+	_schedule_payload_bounds()
+
+	rc.tune_out()
+	server.stop()
+	peer.stop()
+	_check(true, "both managers stopped")
+
+
+## The schedule message on its own: empty and oversized payloads fail validation, a small one round-trips.
+func _schedule_payload_bounds() -> void:
 	var empty := RadioScheduleMessage.new()
 	_check(not empty.validate().ok, "an empty payload fails validation")
 	var big := RadioScheduleMessage.make(PackedByteArray())
@@ -120,11 +130,6 @@ func _test_end_to_end() -> void:
 	var decoded := RadioScheduleMessage.new()
 	decoded.read(DotNetReader.new(RadioScheduleMessage.make("hi".to_utf8_buffer()).to_bytes()))
 	_check(decoded.payload == "hi".to_utf8_buffer(), "the body round-trips through the writer and reader")
-
-	rc.tune_out()
-	server.stop()
-	peer.stop()
-	_check(true, "both managers stopped")
 
 
 # Delivers queued payloads to the other end; the schema tables travel first and are handled by the managers.

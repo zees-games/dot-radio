@@ -13,6 +13,8 @@ var volume_slider := HSlider.new()
 var mute_button := CheckButton.new()
 
 var _syncing := false
+## The whole seconds (position, duration) the tooltip shows; (-1, -1) for none, (-2, -2) before the first update.
+var _tip_secs := Vector2i(-2, -2)
 
 
 func _init() -> void:
@@ -85,6 +87,11 @@ static func format_time(sec: float) -> String:
 	return "%d:%02d" % [s / 60, s % 60]
 
 
+## "1:05 / 3:20", the progress tooltip; empty when [param dur] is not positive.
+static func progress_text(pos: float, dur: float) -> String:
+	return "%s / %s" % [format_time(pos), format_time(dur)] if dur > 0.0 else ""
+
+
 ## Re-reads the client into the widgets without feeding the change back to it.
 func refresh() -> void:
 	if client == null:
@@ -107,7 +114,11 @@ func _update_progress() -> void:
 	var dur := float(now.get("duration", 0.0))
 	progress.max_value = maxf(dur, 0.001)
 	progress.value = clampf(client.expected_position(), 0.0, dur) if dur > 0.0 and client != null else 0.0
-	tooltip_text = "%s / %s" % [format_time(progress.value), format_time(dur)] if dur > 0.0 else ""
+	# Every frame, but the text only changes once a second: rebuild it only then.
+	var secs := Vector2i(maxi(0, int(progress.value)), maxi(0, int(dur))) if dur > 0.0 else Vector2i(-1, -1)
+	if secs != _tip_secs:
+		_tip_secs = secs
+		tooltip_text = DotRadioHud.progress_text(progress.value, dur)
 
 
 func _on_client_changed(_arg: Variant = null) -> void:
