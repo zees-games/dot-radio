@@ -1,3 +1,5 @@
+[![dot-radio - GameSpice addon](docs/banner.png)](https://github.com/gamespice-platform/dot-radio)
+
 An in-game radio for a game server. The operator uploads MP3 and OGG tracks through a small admin page (or the JSON API). The server plays them as one station, and every player who tunes in hears the same track at the same point. Design notes: [docs/design.md](docs/design.md).
 
 **Licensing: this addon only provides upload functionality. It ships no audio and does not supply, license or check the rights to any music. Operators supply their own audio and are responsible for having the right to broadcast it.**
