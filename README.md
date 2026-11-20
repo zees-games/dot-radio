@@ -1,4 +1,4 @@
-[![Radio - GameSpice addon](docs/banner.png)](https://github.com/gamespice-platform/dot-radio)
+[![Radio - GameSpice addon](docs/banner.png)](https://moddingcommunity.com/a/112-gs-radio)
 
 An in-game radio for a game server. The operator uploads MP3 and OGG tracks through a small admin page (or the JSON API). The server plays them as one station, and every player who tunes in hears the same track at the same point. Design notes: [docs/design.md](docs/design.md).
 
